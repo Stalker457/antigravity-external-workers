@@ -1,0 +1,10 @@
+# PTC 模式覆盖层 —— 仅在想用 PTC 时通过 --patch 传入
+# 用法： dsh --patch "%USERPROFILE%\.dsh\patches\ptc.yml" --profile headless --json "<task>"
+# 注意：--patch 必须写在 --profile 之前；native 与 ptc 两个执行器互斥，必须成对切换。
+- id: tool-executor-native
+  name: "@deepseek-ai/dsh-tool-executor-native"
+  disabled: true
+
+- id: tool-executor-ptc
+  name: "@deepseek-ai/dsh-tool-executor-ptc"
+  disabled: false

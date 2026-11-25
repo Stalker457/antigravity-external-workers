@@ -1,0 +1,1384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DSH Monitor</title>
+  <script>
+    (function () {
+      var THEME_KEY = 'dsh_monitor_theme_vars_v1';
+      function applyVars(vars) {
+        if (!vars || typeof vars !== 'object') return;
+        var rootStyle = document.documentElement.style;
+        Object.keys(vars).forEach(function (k) {
+          if (k.indexOf('--') === 0 && typeof vars[k] === 'string') {
+            rootStyle.setProperty(k, vars[k]);
+          }
+        });
+      }
+      try {
+        var cached = localStorage.getItem(THEME_KEY);
+        if (cached) applyVars(JSON.parse(cached));
+      } catch (_) {}
+
+      window.addEventListener('message', function (ev) {
+        if (ev && ev.data && ev.data.type === 'theme-change') {
+          var vars = ev.data.payload && ev.data.payload.cssVariables;
+          if (vars) {
+            applyVars(vars);
+            try { localStorage.setItem(THEME_KEY, JSON.stringify(vars)); } catch (_) {}
+          }
+        }
+      });
+
+      window.__saveMonitorTheme = function () {
+        try {
+          var st = document.documentElement.style;
+          var vars = {};
+          for (var i = 0; i < st.length; i++) {
+            var name = st[i];
+            if (name && name.indexOf('--') === 0) {
+              vars[name] = st.getPropertyValue(name);
+            }
+          }
+          if (Object.keys(vars).length) {
+            localStorage.setItem(THEME_KEY, JSON.stringify(vars));
+          }
+        } catch (_) {}
+      };
+    })();
+  </script>
+  <script src="/preload.js"></script>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: var(--background, #f7f7f8);
+      --card-bg: var(--card, #ffffff);
+      --muted-bg: var(--muted, #eff0f1);
+      --sec-bg: var(--secondary, #e6e7e9);
+      --fg: var(--foreground, #1d1f21);
+      --fg-muted: var(--muted-foreground, #5d676f);
+      --border-c: var(--border, rgba(128, 128, 128, 0.2));
+      --accent: var(--primary, #4d6bfe);
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --err: var(--error, #ef4444);
+      --run: #60a5fa;
+      --font: var(--font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+      --mono: var(--editor-font-family, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --background: #121316;
+        --card: #1a1c20;
+        --muted: #24272d;
+        --secondary: #2a2d35;
+        --foreground: #e5e7eb;
+        --muted-foreground: #9ca3af;
+        --border: rgba(255, 255, 255, 0.12);
+        --primary: #38bdf8;
+        --error: #f87171;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font);
+      font-size: 12.5px;
+      line-height: 1.45;
+      overflow: hidden;
+    }
+
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* Header */
+    .header {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-c);
+      background: var(--card-bg);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .status-group {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--fg-muted);
+    }
+    .dot.running {
+      background: var(--run);
+      box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.65);
+      animation: pulse 1.4s infinite;
+    }
+    .dot.ok { background: var(--ok); }
+    .dot.stopped { background: var(--warn); }
+    .dot.error, .dot.timeout { background: var(--err); }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.65); }
+      70% { box-shadow: 0 0 0 7px rgba(56, 189, 248, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+    }
+
+    .run-title {
+      font-weight: 600;
+      font-size: 13px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .timer {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--fg-muted);
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--muted-bg);
+    }
+
+    .btn {
+      border: 1px solid var(--border-c);
+      background: var(--muted-bg);
+      color: var(--fg);
+      border-radius: 5px;
+      padding: 3px 8px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .btn:hover { filter: brightness(1.08); }
+    .btn-stop {
+      border-color: rgba(239, 68, 68, 0.45);
+      background: rgba(239, 68, 68, 0.16);
+      color: var(--err);
+      font-weight: 600;
+    }
+    .btn-stop:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .btn-subtle {
+      color: var(--fg-muted);
+      background: transparent;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .btn-subtle:hover {
+      color: var(--fg);
+      background: var(--muted-bg);
+    }
+    .btn-confirm {
+      border-color: rgba(239, 68, 68, 0.55);
+      background: rgba(239, 68, 68, 0.18);
+      color: var(--err);
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .batch-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .run-select {
+      flex: 1;
+      min-width: 0;
+      border: 1px solid var(--border-c);
+      background: var(--bg);
+      color: var(--fg);
+      border-radius: 5px;
+      padding: 4px 8px;
+      font-size: 11.5px;
+      font-family: var(--font);
+      outline: none;
+    }
+
+    /* Group Worker Tabs */
+    .worker-tabs-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--border-c);
+      background: var(--bg);
+      overflow-x: auto;
+      flex-shrink: 0;
+    }
+    .worker-tabs-bar::-webkit-scrollbar { height: 5px; }
+    .worker-tabs-bar::-webkit-scrollbar-thumb {
+      background: var(--border-c);
+      border-radius: 4px;
+    }
+    .worker-tab {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 9px;
+      border-radius: 6px;
+      border: 1px solid var(--border-c);
+      background: var(--muted-bg);
+      color: var(--fg-muted);
+      font-family: var(--font);
+      font-size: 11.5px;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+      max-width: 240px;
+      transition: border-color 0.12s, background 0.12s;
+    }
+    .worker-tab:hover {
+      color: var(--fg);
+      border-color: var(--accent);
+    }
+    .worker-tab.active {
+      background: var(--card-bg);
+      color: var(--fg);
+      border-color: var(--accent);
+      box-shadow: inset 0 -2px 0 0 var(--accent);
+      font-weight: 600;
+    }
+    .worker-tab .w-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--fg-muted);
+    }
+    .worker-tab .w-dot.running {
+      background: var(--run);
+      animation: pulse 1.4s infinite;
+    }
+    .worker-tab .w-dot.ok { background: var(--ok); }
+    .worker-tab .w-dot.stopped { background: var(--warn); }
+    .worker-tab .w-dot.error, .worker-tab .w-dot.timeout { background: var(--err); }
+    .worker-tab .w-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .worker-tab .w-meta {
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 400;
+      color: var(--fg-muted);
+      flex-shrink: 0;
+    }
+
+    /* Metadata Pills */
+    .meta-grid {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-c);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      flex-shrink: 0;
+      background: var(--bg);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 5px;
+      background: var(--card-bg);
+      border: 1px solid var(--border-c);
+      font-size: 11px;
+      max-width: 100%;
+    }
+    .pill .k { color: var(--fg-muted); }
+    .pill .v {
+      font-family: var(--mono);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .pill.clickable { cursor: pointer; }
+    .pill.clickable:hover { border-color: var(--accent); }
+    .pill.ptc-mode {
+      border-color: rgba(168, 85, 247, 0.55);
+      background: rgba(168, 85, 247, 0.14);
+    }
+    .pill.ptc-mode .v {
+      color: #c084fc;
+      font-weight: 700;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--border-c);
+      background: var(--card-bg);
+      flex-shrink: 0;
+    }
+
+    .tab-buttons {
+      display: flex;
+      gap: 4px;
+    }
+
+    .tab-btn {
+      border: none;
+      background: transparent;
+      color: var(--fg-muted);
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .tab-btn.active {
+      color: var(--fg);
+      border-bottom-color: var(--accent);
+    }
+
+    .autoscroll-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--fg-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    /* Main Content */
+    .content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 10px 12px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+    }
+
+    .stream-line {
+      display: flex;
+      align-items: flex-start;
+      gap: 7px;
+      padding: 3px 6px;
+      border-radius: 4px;
+      word-break: break-all;
+    }
+    .stream-line:hover { background: var(--muted-bg); }
+
+    .ts {
+      color: var(--fg-muted);
+      flex-shrink: 0;
+      font-size: 10.5px;
+      margin-top: 1px;
+    }
+
+    .badge {
+      flex-shrink: 0;
+      font-size: 10px;
+      padding: 0 5px;
+      border-radius: 3px;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-top: 1px;
+    }
+    .b-step  { background: rgba(168, 85, 247, 0.16); color: #a855f7; }
+    .b-think { background: rgba(236, 72, 153, 0.16); color: #ec4899; }
+    .b-tool  { background: rgba(56, 189, 248, 0.16); color: #38bdf8; }
+    .b-done  { background: rgba(34, 197, 94, 0.16); color: #22c55e; }
+    .b-out   { background: rgba(14, 165, 233, 0.18); color: #0ea5e9; }
+    .b-err   { background: rgba(239, 68, 68, 0.18); color: #ef4444; }
+    .b-info  { background: var(--muted-bg); color: var(--fg-muted); }
+
+    .think-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-c);
+      border-left: 3px solid #ec4899;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+    }
+    .think-card.live {
+      border-left-color: var(--run);
+    }
+    .think-head {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--fg-muted);
+      margin-bottom: 4px;
+    }
+    .think-body {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: var(--font);
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--fg);
+    }
+    .think-inline-wrap {
+      display: flex;
+      flex-direction: column;
+      border-radius: 4px;
+    }
+    .stream-line.clickable {
+      cursor: pointer;
+    }
+    .expand-tag {
+      flex-shrink: 0;
+      font-size: 10px;
+      color: #ec4899;
+      background: rgba(236, 72, 153, 0.12);
+      border-radius: 3px;
+      padding: 0 5px;
+      margin-left: 4px;
+    }
+    .inline-full-think {
+      margin: 2px 6px 6px 56px;
+      padding: 8px 10px;
+      background: var(--card-bg);
+      border: 1px solid var(--border-c);
+      border-left: 3px solid #ec4899;
+      border-radius: 5px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: var(--font);
+      font-size: 11.5px;
+      line-height: 1.55;
+      color: var(--fg);
+    }
+    .live-stream-box {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background: var(--card-bg);
+      border: 1px solid var(--border-c);
+      border-left: 3px solid var(--run);
+      border-radius: 6px;
+    }
+    .live-stream-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-family: var(--font);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--run);
+      margin-bottom: 4px;
+    }
+    .live-stream-body {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: var(--font);
+      font-size: 11.5px;
+      line-height: 1.55;
+      color: var(--fg);
+      max-height: 260px;
+      overflow-y: auto;
+    }
+
+    .msg-text {
+      white-space: pre-wrap;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .pre-box {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: var(--card-bg);
+      border: 1px solid var(--border-c);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin: 0;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      line-height: 1.5;
+    }
+
+    .empty {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: var(--fg-muted);
+      padding: 24px;
+      font-family: var(--font);
+      gap: 8px;
+    }
+    .empty strong { color: var(--fg); font-size: 13.5px; }
+    .hint {
+      font-size: 11px;
+      color: var(--fg-muted);
+      background: var(--card-bg);
+      border: 1px solid var(--border-c);
+      padding: 6px 10px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="header">
+      <div class="title-row">
+        <div class="status-group">
+          <span id="statusDot" class="dot"></span>
+          <span id="runTitle" class="run-title">DSH Monitor</span>
+        </div>
+        <div class="controls">
+          <span id="elapsed" class="timer">--s</span>
+          <button id="stopBtn" class="btn btn-stop" title="立即停止当前选中的 DSH 子任务" style="display:none;">■ 停止</button>
+          <button id="stopBatchBtn" class="btn btn-stop" title="一键停止本任务组内所有正在运行的 DSH 子任务" style="display:none;">■ 停止本组</button>
+          <button id="refreshBtn" class="btn" title="刷新数据">刷新</button>
+          <button id="reloadBtn" class="btn" title="重新加载面板页面">重载</button>
+        </div>
+      </div>
+      <div class="batch-bar">
+        <select id="groupSelect" class="run-select" aria-label="选择任务组"></select>
+        <button id="deleteBatchBtn" class="btn btn-subtle" title="删除当前任务组的监控记录与临时日志" style="display:none;">清理本组</button>
+        <button id="clearHistoryBtn" class="btn btn-subtle" title="清空所有已结束的历史任务记录" style="display:none;">清空历史</button>
+      </div>
+    </div>
+
+    <div id="workerTabsBar" class="worker-tabs-bar" style="display:none;"></div>
+
+    <div id="metaGrid" class="meta-grid" style="display:none;"></div>
+
+    <div class="tabs">
+      <div class="tab-buttons">
+        <button class="tab-btn active" data-tab="stream">实时进度</button>
+        <button class="tab-btn" data-tab="thinking" id="thinkingTabBtn">思维链</button>
+        <button class="tab-btn" data-tab="spec">任务书</button>
+        <button class="tab-btn" data-tab="output">输出</button>
+      </div>
+      <div class="controls" style="display:flex;align-items:center;gap:6px;">
+        <label class="autoscroll-label" title="勾选后有新内容会自动拉到最底部">
+          <input id="autoScroll" type="checkbox" checked />
+          自动滚底
+        </label>
+        <button id="scrollBottomBtn" class="btn" title="滚到最底部" style="padding:1px 6px;">↓</button>
+      </div>
+    </div>
+
+    <div id="content" class="content"></div>
+  </div>
+
+  <script>
+    const state = {
+      groups: [],
+      runs: [],
+      selected: null,
+      progressLines: [],
+      selectedBatchId: '',
+      selectedRunId: '',
+      lastTopBatchId: '',
+      pinnedOldBatch: false,
+      etag: '',
+      activeTab: 'stream',
+      expandedThinks: new Set(),
+      confirmAction: '',
+      confirmTimer: null,
+    };
+
+    const elDot = document.getElementById('statusDot');
+    const elTitle = document.getElementById('runTitle');
+    const elElapsed = document.getElementById('elapsed');
+    const elGroupSelect = document.getElementById('groupSelect');
+    const elWorkerTabsBar = document.getElementById('workerTabsBar');
+    const elMeta = document.getElementById('metaGrid');
+    const elContent = document.getElementById('content');
+    const elAutoScroll = document.getElementById('autoScroll');
+    const elStopBtn = document.getElementById('stopBtn');
+    const elStopBatchBtn = document.getElementById('stopBatchBtn');
+    const elDeleteBatchBtn = document.getElementById('deleteBatchBtn');
+    const elClearHistoryBtn = document.getElementById('clearHistoryBtn');
+
+    function escapeHtml(s) {
+      return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    function formatDuration(ms) {
+      if (!Number.isFinite(ms) || ms < 0) return '--s';
+      const sec = Math.floor(ms / 1000);
+      if (sec < 60) return `${sec}s`;
+      const m = Math.floor(sec / 60);
+      const r = sec % 60;
+      return `${m}m${String(r).padStart(2, '0')}s`;
+    }
+
+    function shortPath(p) {
+      if (!p) return '-';
+      const parts = String(p).replace(/\\/g, '/').split('/').filter(Boolean);
+      return parts.length > 2 ? '…/' + parts.slice(-2).join('/') : p;
+    }
+
+    function classifyLine(line) {
+      const m = /^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$/.exec(line);
+      const ts = m ? m[1] : '';
+      const body = m ? m[2] : line;
+
+      if (body.startsWith('[think]')) {
+        return { ts, badge: 'THINK', cls: 'b-think', text: body.slice(7).trim() };
+      }
+      if (body.startsWith('[tool]')) {
+        return { ts, badge: 'TOOL', cls: 'b-tool', text: body.slice(6).trim() };
+      }
+      if (/^\[step\s+\d+\s+done\]/.test(body)) {
+        return { ts, badge: 'DONE', cls: 'b-done', text: body };
+      }
+      if (/^\[step\s+\d+\]/.test(body)) {
+        return { ts, badge: 'STEP', cls: 'b-step', text: body };
+      }
+      if (body.startsWith('[output]')) {
+        return { ts, badge: 'OUT', cls: 'b-out', text: body.slice(8).trim() };
+      }
+      if (body.startsWith('[stopped]')) {
+        return { ts, badge: 'STOP', cls: 'b-err', text: body.slice(9).trim() || '已手动停止' };
+      }
+      if (body.startsWith('[stderr]') || body.startsWith('[timeout]') || body.includes('ERROR')) {
+        return { ts, badge: 'ERR', cls: 'b-err', text: body };
+      }
+      return { ts, badge: 'INFO', cls: 'b-info', text: body };
+    }
+
+    function getSelectedGroup() {
+      if (!state.groups.length) return null;
+      return (
+        state.groups.find((g) => g.batch_id === state.selectedBatchId) ||
+        state.groups[0]
+      );
+    }
+
+    function clearPendingConfirm() {
+      if (state.confirmTimer) {
+        clearTimeout(state.confirmTimer);
+        state.confirmTimer = null;
+      }
+      state.confirmAction = '';
+    }
+
+    function updateCleanupButtons() {
+      const g = getSelectedGroup();
+      const hasFinishedHistory = state.groups.some((grp) =>
+        grp.runs.some((r) => r.status !== 'running')
+      );
+
+      if (g && g.running_count === 0) {
+        elDeleteBatchBtn.style.display = 'inline-block';
+        const isConfirm = state.confirmAction === `delete:${g.batch_id}`;
+        elDeleteBatchBtn.className = isConfirm ? 'btn btn-confirm' : 'btn btn-subtle';
+        elDeleteBatchBtn.textContent = isConfirm ? '确认删本组?' : '清理本组';
+      } else {
+        elDeleteBatchBtn.style.display = 'none';
+      }
+
+      if (hasFinishedHistory) {
+        elClearHistoryBtn.style.display = 'inline-block';
+        const isConfirm = state.confirmAction === 'clear-all';
+        elClearHistoryBtn.className = isConfirm ? 'btn btn-confirm' : 'btn btn-subtle';
+        elClearHistoryBtn.textContent = isConfirm ? '确认清空?' : '清空历史';
+      } else {
+        elClearHistoryBtn.style.display = 'none';
+      }
+    }
+
+    function renderGroupSelect() {
+      const curBatchId = state.selectedBatchId || (state.groups[0] && state.groups[0].batch_id) || '';
+      if (!state.groups.length) {
+        elGroupSelect.innerHTML = '<option value="">暂无任务组记录</option>';
+        updateCleanupButtons();
+        return;
+      }
+      const statusIcon = { running: '●', ok: '✓', stopped: '■', error: '✕', timeout: '⏱' };
+      elGroupSelect.innerHTML = state.groups
+        .map((g) => {
+          const icon = statusIcon[g.status] || '•';
+          const time = (g.started_at || '').slice(11, 19);
+          let suffix = '';
+          if (g.total_count > 1) {
+            if (g.running_count > 0) {
+              suffix = ` (${g.running_count}/${g.total_count} 运行中)`;
+            } else if (g.ok_count === g.total_count) {
+              suffix = ` (${g.total_count}/${g.total_count} 完成)`;
+            } else {
+              suffix = ` (${g.ok_count}/${g.total_count} 完成)`;
+            }
+          }
+          const label = `${icon} [${time}] ${g.batch_title}${suffix}`;
+          const sel = g.batch_id === curBatchId ? 'selected' : '';
+          return `<option value="${escapeHtml(g.batch_id)}" ${sel}>${escapeHtml(label)}</option>`;
+        })
+        .join('');
+      updateCleanupButtons();
+    }
+
+    function renderWorkerTabs() {
+      const g = getSelectedGroup();
+      if (!g || !Array.isArray(g.runs) || g.runs.length <= 1) {
+        elWorkerTabsBar.style.display = 'none';
+        elWorkerTabsBar.innerHTML = '';
+        return;
+      }
+
+      const activeRunId = (state.selected && state.selected.run_id) || state.selectedRunId || g.runs[0].run_id;
+      const now = Date.now();
+      elWorkerTabsBar.style.display = 'flex';
+      elWorkerTabsBar.innerHTML = g.runs
+        .map((r, idx) => {
+          const isActive = r.run_id === activeRunId;
+          const dur = r.started_ms ? formatDuration((r.ended_ms || now) - r.started_ms) : '--s';
+          const stepPart = r.status === 'running' && r.step_count ? `S${r.step_count}·` : '';
+          const metaText = `${stepPart}${dur}`;
+          const fullTitle = `${idx + 1}. ${r.title || 'Worker'}`;
+          return `
+            <button type="button" class="worker-tab ${isActive ? 'active' : ''}" data-run-id="${escapeHtml(r.run_id)}" title="${escapeHtml(fullTitle)}">
+              <span class="w-dot ${escapeHtml(r.status || '')}"></span>
+              <span class="w-title">${escapeHtml(fullTitle)}</span>
+              <span class="w-meta" data-worker-timer="${escapeHtml(r.run_id)}">${escapeHtml(metaText)}</span>
+            </button>`;
+        })
+        .join('');
+    }
+
+    function renderMeta() {
+      const s = state.selected;
+      const g = getSelectedGroup();
+      if (!s) {
+        elDot.className = 'dot';
+        elTitle.textContent = 'DSH Monitor';
+        elElapsed.textContent = '--s';
+        elStopBtn.style.display = 'none';
+        elStopBatchBtn.style.display = 'none';
+        elMeta.style.display = 'none';
+        return;
+      }
+
+      elDot.className = `dot ${s.status || ''}`;
+      elTitle.textContent = s.title || 'DSH Worker Run';
+      if (s.status === 'running') {
+        elStopBtn.style.display = 'inline-block';
+        if (elStopBtn.dataset.stoppingRun !== s.run_id) {
+          elStopBtn.disabled = false;
+          elStopBtn.textContent = '■ 停止';
+        }
+      } else {
+        elStopBtn.style.display = 'none';
+        elStopBtn.disabled = false;
+        elStopBtn.textContent = '■ 停止';
+        delete elStopBtn.dataset.stoppingRun;
+      }
+
+      if (g && g.running_count >= 2) {
+        elStopBatchBtn.style.display = 'inline-block';
+        if (elStopBatchBtn.dataset.stoppingBatch !== g.batch_id) {
+          elStopBatchBtn.disabled = false;
+          elStopBatchBtn.textContent = `■ 停本组(${g.running_count})`;
+        }
+      } else {
+        elStopBatchBtn.style.display = 'none';
+        elStopBatchBtn.disabled = false;
+        elStopBatchBtn.textContent = '■ 停止本组';
+        delete elStopBatchBtn.dataset.stoppingBatch;
+      }
+
+      updateTimer();
+
+      function formatTokenCount(n) {
+        const num = Math.max(0, Math.round(Number(n) || 0));
+        if (num < 100000) return String(num);
+        const m = (num / 1000000).toFixed(2).replace(/\.?0+$/, '');
+        return `${m}M`;
+      }
+
+      const tk = s.tokens || {};
+      const inTok = Number(tk.input) || 0;
+      const outTok = Number(tk.output) || 0;
+      const rsnTok = Number(tk.reasoning) || 0;
+      const crTok = Number(tk.cache_read) || 0;
+      const cwTok = Number(tk.cache_write) || 0;
+      const tokStr = `in:${formatTokenCount(inTok)} / out:${formatTokenCount(outTok)} / cache:${formatTokenCount(crTok)}`;
+      const tokTitle = `精确用量: in:${inTok.toLocaleString()} / out:${outTok.toLocaleString()} / cache:${crTok.toLocaleString()}`;
+
+      const metrics = s.metrics || {};
+      const promptTotal = inTok + crTok + cwTok;
+      const cacheHitRate = typeof metrics.cache_hit_rate === 'number'
+        ? metrics.cache_hit_rate
+        : (promptTotal > 0 ? (crTok / promptTotal) * 100 : null);
+      const cacheHitStr = cacheHitRate !== null ? `${cacheHitRate.toFixed(1)}%` : '--';
+      const cacheHitTitle = promptTotal > 0
+        ? `缓存命中 ${crTok.toLocaleString()} / 总输入 ${promptTotal.toLocaleString()}`
+        : '尚无输入 Token 数据';
+
+      const genTokens = outTok + rsnTok;
+      let avgTps = typeof metrics.avg_tps === 'number' ? metrics.avg_tps : null;
+      let isEstimatedTps = false;
+      if (avgTps === null && genTokens > 0 && s.started_ms) {
+        const durSec = Math.max(0.001, ((s.ended_ms || Date.now()) - s.started_ms) / 1000);
+        avgTps = genTokens / durSec;
+        isEstimatedTps = true;
+      }
+      const tpsStr = avgTps !== null ? `${avgTps.toFixed(1)} tok/s` : '--';
+      const lastStepTps = typeof metrics.last_step_tps === 'number' ? metrics.last_step_tps : null;
+      const tpsTitleParts = [];
+      if (avgTps !== null) {
+        tpsTitleParts.push(
+          isEstimatedTps
+            ? `估算平均速度(含工具耗时): ${avgTps.toFixed(1)} tok/s`
+            : `平均生成速度(已扣工具耗时): ${avgTps.toFixed(1)} tok/s`
+        );
+      }
+      if (lastStepTps !== null) {
+        tpsTitleParts.push(`最近一步: ${lastStepTps.toFixed(1)} tok/s`);
+      }
+      if (typeof metrics.gen_ms === 'number' && metrics.gen_ms > 0) {
+        tpsTitleParts.push(`累计生成: ${genTokens.toLocaleString()} tok / ${(metrics.gen_ms / 1000).toFixed(1)}s`);
+      }
+      const tpsTitle = tpsTitleParts.join(' | ') || '等待步骤完成统计输出速度';
+
+      const rsnList = Array.isArray(s.reasonings) ? s.reasonings : [];
+      const hasLiveRsn = s.status === 'running' && Boolean(s.live_reasoning);
+      const thinkCount = rsnList.length + (hasLiveRsn ? 1 : 0);
+      const thinkBtn = document.getElementById('thinkingTabBtn');
+      if (thinkBtn) {
+        thinkBtn.textContent = thinkCount ? `思维链 (${thinkCount})` : '思维链';
+      }
+      const execMode = String(s.exec_mode || 'native').toLowerCase();
+      const isPtc = execMode === 'ptc';
+      const pills = [
+        { k: '模型', v: s.model || '<default>' },
+        {
+          k: '模式',
+          v: isPtc ? 'PTC' : 'native',
+          extraCls: isPtc ? 'ptc-mode' : '',
+          title: isPtc
+            ? 'PTC 模式（Programmatic Tool Calling，多步组合工具执行，适合复杂多文件任务）'
+            : 'native 模式（标准单步工具执行，适合简单任务）',
+        },
+        { k: '目录', v: shortPath(s.workdir), title: s.workdir },
+        { k: '步骤/工具', v: `${s.step_count || 0} / ${s.tools_count || 0}` },
+        { k: 'Tokens', v: tokStr, title: tokTitle },
+        { k: '缓存命中', v: cacheHitStr, title: cacheHitTitle },
+        { k: '输出速度', v: tpsStr, title: tpsTitle },
+      ];
+      if (s.session_id) {
+        pills.push({ k: 'Session', v: s.session_id, copy: s.session_id });
+      }
+
+      elMeta.style.display = 'flex';
+      elMeta.innerHTML = pills
+        .map((p) => {
+          const cls = ['pill', p.copy ? 'clickable' : '', p.extraCls || ''].filter(Boolean).join(' ');
+          const copyAttr = p.copy ? `data-copy="${escapeHtml(p.copy)}" title="点击复制 SessionID"` : (p.title ? `title="${escapeHtml(p.title)}"` : '');
+          return `<span class="${cls}" ${copyAttr}><span class="k">${escapeHtml(p.k)}</span><span class="v">${escapeHtml(p.v)}</span></span>`;
+        })
+        .join('');
+    }
+
+    function updateTimer() {
+      const now = Date.now();
+      const s = state.selected;
+      if (!s || !s.started_ms) {
+        elElapsed.textContent = '--s';
+      } else {
+        const end = s.ended_ms || now;
+        elElapsed.textContent = formatDuration(end - s.started_ms);
+      }
+
+      const g = getSelectedGroup();
+      if (g && g.runs && g.runs.length > 1) {
+        for (const r of g.runs) {
+          if (r.status !== 'running' || !r.started_ms) continue;
+          const el = elWorkerTabsBar.querySelector(`[data-worker-timer="${CSS.escape(r.run_id)}"]`);
+          if (el) {
+            const stepPart = r.step_count ? `S${r.step_count}·` : '';
+            el.textContent = `${stepPart}${formatDuration(now - r.started_ms)}`;
+          }
+        }
+      }
+    }
+
+    const renderCache = { runId: '', tab: '', lineCount: -1, rsnCount: -1 };
+
+    function isNearBottom(el, threshold = 28) {
+      return !el || (el.scrollHeight - el.scrollTop - el.clientHeight <= threshold);
+    }
+
+    function scrollToBottomAll() {
+      elContent.scrollTop = elContent.scrollHeight;
+      const lr = document.getElementById('liveReasoningBody');
+      if (lr) lr.scrollTop = lr.scrollHeight;
+      const lt = document.getElementById('liveTextBody');
+      if (lt) lt.scrollTop = lt.scrollHeight;
+    }
+
+    function tryInPlaceLiveUpdate(s, rsnList) {
+      if (renderCache.runId !== (s.run_id || '') || renderCache.tab !== state.activeTab) {
+        return false;
+      }
+      if (state.activeTab === 'stream') {
+        if (renderCache.lineCount !== state.progressLines.length || renderCache.rsnCount !== rsnList.length) {
+          return false;
+        }
+        const needLr = s.status === 'running' && Boolean(s.live_reasoning);
+        const needLt = s.status === 'running' && Boolean(s.live_text);
+        const lrEl = document.getElementById('liveReasoningBody');
+        const ltEl = document.getElementById('liveTextBody');
+        if (needLr !== Boolean(lrEl) || needLt !== Boolean(ltEl)) {
+          return false;
+        }
+        if (lrEl) {
+          lrEl.textContent = s.live_reasoning;
+          const cnt = document.getElementById('liveReasoningCount');
+          if (cnt) cnt.textContent = `${s.live_reasoning.length} 字`;
+          if (elAutoScroll.checked) lrEl.scrollTop = lrEl.scrollHeight;
+        }
+        if (ltEl) {
+          ltEl.textContent = s.live_text;
+          const cnt = document.getElementById('liveTextCount');
+          if (cnt) cnt.textContent = `${s.live_text.length} 字`;
+          if (elAutoScroll.checked) ltEl.scrollTop = ltEl.scrollHeight;
+        }
+        if (elAutoScroll.checked && (needLr || needLt)) {
+          elContent.scrollTop = elContent.scrollHeight;
+        }
+        return true;
+      }
+      if (state.activeTab === 'thinking') {
+        if (renderCache.rsnCount !== rsnList.length) return false;
+        const needLive = s.status === 'running' && Boolean(s.live_reasoning);
+        const liveBody = document.getElementById('thinkingLiveBody');
+        if (needLive !== Boolean(liveBody)) return false;
+        if (liveBody) {
+          liveBody.textContent = s.live_reasoning;
+          const cnt = document.getElementById('thinkingLiveCount');
+          if (cnt) cnt.textContent = `${s.live_reasoning.length} 字`;
+          if (elAutoScroll.checked) elContent.scrollTop = elContent.scrollHeight;
+        }
+        return true;
+      }
+      if (state.activeTab === 'output') {
+        const outPre = document.getElementById('outputPre');
+        if (!outPre) return false;
+        const out = s.output_text || s.live_text || (s.status === 'running' ? '(任务正在执行中，完成后显示最终回复…)' : '(无最终文本输出)');
+        outPre.textContent = out;
+        if (elAutoScroll.checked) elContent.scrollTop = elContent.scrollHeight;
+        return true;
+      }
+      return false;
+    }
+
+    function renderContent(forceRebuild = false) {
+      const s = state.selected;
+      if (!s) {
+        renderCache.runId = '';
+        elContent.innerHTML = `
+          <div class="empty">
+            <strong>等待 DeepSeek Harness (DSH) 子代理任务启动…</strong>
+            <div>当 Antigravity 调用 <code>run_worker.py</code> 派发任务给 DeepSeek 时，这里会实时滚屏显示工作进度与任务书。</div>
+            <div class="hint">当前默认模型将自动显示在上方卡片中</div>
+          </div>`;
+        return;
+      }
+
+      const rsnList = Array.isArray(s.reasonings) ? s.reasonings : [];
+      if (!forceRebuild && tryInPlaceLiveUpdate(s, rsnList)) {
+        return;
+      }
+
+      const sameView = renderCache.runId === (s.run_id || '') && renderCache.tab === state.activeTab;
+      const savedContentTop = sameView ? elContent.scrollTop : 0;
+      const savedLrTop = sameView ? (document.getElementById('liveReasoningBody')?.scrollTop || 0) : 0;
+      const savedLtTop = sameView ? (document.getElementById('liveTextBody')?.scrollTop || 0) : 0;
+
+      if (state.activeTab === 'stream') {
+        if (!state.progressLines.length && !s.live_reasoning && !s.live_text) {
+          elContent.innerHTML = '<div class="empty"><div>等待首条日志输出…</div></div>';
+        } else {
+          let thinkCursor = 0;
+          const linesHtml = state.progressLines
+            .map((line) => {
+              const p = classifyLine(line);
+              if (p.cls === 'b-think') {
+                const idx = thinkCursor++;
+                const full = rsnList[idx] && rsnList[idx].text ? String(rsnList[idx].text) : '';
+                if (full) {
+                  const isOpen = state.expandedThinks.has(idx);
+                  const label = isOpen ? '收起' : `展开全文 (${full.length}字)`;
+                  return `
+                    <div class="think-inline-wrap">
+                      <div class="stream-line clickable" data-think-idx="${idx}">
+                        <span class="ts">${escapeHtml(p.ts)}</span>
+                        <span class="badge ${p.cls}">${p.badge}</span>
+                        <span class="msg-text">${escapeHtml(p.text)}</span>
+                        <span class="expand-tag">${label}</span>
+                      </div>
+                      ${isOpen ? `<div class="inline-full-think">${escapeHtml(full)}</div>` : ''}
+                    </div>`;
+                }
+              }
+              return `
+                <div class="stream-line">
+                  <span class="ts">${escapeHtml(p.ts)}</span>
+                  <span class="badge ${p.cls}">${p.badge}</span>
+                  <span class="msg-text">${escapeHtml(p.text)}</span>
+                </div>`;
+            })
+            .join('');
+
+          let liveHtml = '';
+          if (s.status === 'running' && s.live_reasoning) {
+            liveHtml += `
+              <div class="live-stream-box">
+                <div class="live-stream-head">
+                  <span>● 正在实时思考 (Step ${escapeHtml(s.step_count || 1)})</span>
+                  <span id="liveReasoningCount">${s.live_reasoning.length} 字</span>
+                </div>
+                <div class="live-stream-body" id="liveReasoningBody">${escapeHtml(s.live_reasoning)}</div>
+              </div>`;
+          }
+          if (s.status === 'running' && s.live_text) {
+            liveHtml += `
+              <div class="live-stream-box">
+                <div class="live-stream-head">
+                  <span>● 正在实时输出回复</span>
+                  <span id="liveTextCount">${s.live_text.length} 字</span>
+                </div>
+                <div class="live-stream-body" id="liveTextBody">${escapeHtml(s.live_text)}</div>
+              </div>`;
+          }
+
+          elContent.innerHTML = linesHtml + liveHtml;
+        }
+      } else if (state.activeTab === 'thinking') {
+        const hasLive = s.status === 'running' && Boolean(s.live_reasoning);
+        if (!rsnList.length && !hasLive) {
+          elContent.innerHTML = '<div class="empty"><div>暂无思维链记录（模型仍在启动或尚未开启 --thinking…）</div></div>';
+        } else {
+          let html = rsnList
+            .map((item) => {
+              const txt = String(item.text || '');
+              return `
+                <div class="think-card">
+                  <div class="think-head">
+                    <span>Step ${escapeHtml(item.step)} · ${txt.length} 字</span>
+                    <span>${escapeHtml(item.time || '')}</span>
+                  </div>
+                  <div class="think-body">${escapeHtml(txt)}</div>
+                </div>`;
+            })
+            .join('');
+          if (hasLive) {
+            html += `
+              <div class="think-card live">
+                <div class="think-head">
+                  <span>● Step ${escapeHtml(s.step_count || rsnList.length + 1)} 实时思考中…</span>
+                  <span id="thinkingLiveCount">${s.live_reasoning.length} 字</span>
+                </div>
+                <div class="think-body" id="thinkingLiveBody">${escapeHtml(s.live_reasoning)}</div>
+              </div>`;
+          }
+          elContent.innerHTML = html;
+        }
+      } else if (state.activeTab === 'spec') {
+        const spec = s.task_prompt || '(无任务书正文)';
+        elContent.innerHTML = `<pre class="pre-box">${escapeHtml(spec)}</pre>`;
+      } else if (state.activeTab === 'output') {
+        const out = s.output_text || s.live_text || (s.status === 'running' ? '(任务正在执行中，完成后显示最终回复…)' : '(无最终文本输出)');
+        elContent.innerHTML = `<pre class="pre-box" id="outputPre">${escapeHtml(out)}</pre>`;
+      }
+
+      renderCache.runId = s.run_id || '';
+      renderCache.tab = state.activeTab;
+      renderCache.lineCount = state.progressLines.length;
+      renderCache.rsnCount = rsnList.length;
+
+      if (elAutoScroll.checked) {
+        scrollToBottomAll();
+      } else if (sameView) {
+        elContent.scrollTop = savedContentTop;
+        const lr = document.getElementById('liveReasoningBody');
+        if (lr) lr.scrollTop = savedLrTop;
+        const lt = document.getElementById('liveTextBody');
+        if (lt) lt.scrollTop = savedLtTop;
+      }
+    }
+
+    async function poll(force = false) {
+      try {
+        const params = new URLSearchParams();
+        if (state.selectedBatchId) params.set('batchId', state.selectedBatchId);
+        if (state.selectedRunId) params.set('runId', state.selectedRunId);
+        if (!force && state.etag) params.set('etag', state.etag);
+
+        const fetcher = window.sidecar?.fetch || fetch;
+        const res = await fetcher(`/api/runs?${params.toString()}`, { method: 'GET' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.unchanged) return;
+
+        const newGroups = data.groups || [];
+        const newTopId = newGroups.length ? newGroups[0].batch_id : '';
+        const newBatchArrived = Boolean(
+          state.lastTopBatchId &&
+          newTopId &&
+          newTopId !== state.lastTopBatchId &&
+          !state.pinnedOldBatch &&
+          newGroups[0].running_count > 0
+        );
+        state.lastTopBatchId = newTopId;
+
+        if (newBatchArrived) {
+          state.selectedBatchId = newTopId;
+          state.selectedRunId = '';
+          state.expandedThinks.clear();
+          state.etag = '';
+          poll(true);
+          return;
+        }
+
+        state.etag = data.etag || '';
+        state.groups = newGroups;
+        state.runs = data.runs || [];
+        state.selectedBatchId = data.selectedGroupId || '';
+        state.selected = data.selected || null;
+        state.selectedRunId = (state.selected && state.selected.run_id) || '';
+        state.progressLines = data.progressLines || [];
+
+        renderGroupSelect();
+        renderWorkerTabs();
+        renderMeta();
+        renderContent();
+      } catch {
+        // Ignore transient poll failure during shutdown/restart.
+      }
+    }
+
+    document.querySelectorAll('.tab-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        state.activeTab = btn.dataset.tab;
+        renderContent(true);
+      });
+    });
+
+    elContent.addEventListener('scroll', () => {
+      if (elAutoScroll.checked && !isNearBottom(elContent, 36)) {
+        elAutoScroll.checked = false;
+      }
+    });
+
+    elContent.addEventListener('click', (e) => {
+      const row = e.target.closest('[data-think-idx]');
+      if (!row) return;
+      const idx = Number(row.getAttribute('data-think-idx'));
+      if (state.expandedThinks.has(idx)) {
+        state.expandedThinks.delete(idx);
+      } else {
+        state.expandedThinks.add(idx);
+      }
+      renderContent(true);
+    });
+
+    document.getElementById('scrollBottomBtn').addEventListener('click', () => {
+      scrollToBottomAll();
+    });
+
+    elAutoScroll.addEventListener('change', () => {
+      if (elAutoScroll.checked) scrollToBottomAll();
+    });
+
+    elGroupSelect.addEventListener('change', () => {
+      clearPendingConfirm();
+      state.selectedBatchId = elGroupSelect.value;
+      state.selectedRunId = '';
+      state.pinnedOldBatch = elGroupSelect.selectedIndex > 0;
+      state.expandedThinks.clear();
+      state.etag = '';
+      poll(true);
+    });
+
+    elWorkerTabsBar.addEventListener('click', (e) => {
+      const tab = e.target.closest('[data-run-id]');
+      if (!tab) return;
+      const runId = tab.getAttribute('data-run-id');
+      if (!runId || runId === state.selectedRunId) return;
+      state.selectedRunId = runId;
+      state.expandedThinks.clear();
+      state.etag = '';
+      poll(true);
+    });
+
+    document.getElementById('refreshBtn').addEventListener('click', () => {
+      clearPendingConfirm();
+      state.etag = '';
+      poll(true);
+    });
+
+    elStopBtn.addEventListener('click', async () => {
+      const s = state.selected;
+      if (!s || s.status !== 'running' || !s.run_id) return;
+      elStopBtn.disabled = true;
+      elStopBtn.textContent = '停止中…';
+      elStopBtn.dataset.stoppingRun = s.run_id;
+      try {
+        const fetcher = window.sidecar?.fetch || fetch;
+        await fetcher('/api/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runId: s.run_id }),
+        });
+      } catch {
+        // Poll below will reflect latest state.
+      }
+      state.etag = '';
+      poll(true);
+    });
+
+    elStopBatchBtn.addEventListener('click', async () => {
+      const g = getSelectedGroup();
+      if (!g || g.running_count < 2) return;
+      elStopBatchBtn.disabled = true;
+      elStopBatchBtn.textContent = '停止本组中…';
+      elStopBatchBtn.dataset.stoppingBatch = g.batch_id;
+      try {
+        const fetcher = window.sidecar?.fetch || fetch;
+        await fetcher('/api/stop-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchId: g.batch_id }),
+        });
+      } catch {
+        // Poll below will reflect latest state.
+      }
+      state.etag = '';
+      poll(true);
+    });
+
+    function armConfirm(key) {
+      clearPendingConfirm();
+      state.confirmAction = key;
+      updateCleanupButtons();
+      state.confirmTimer = setTimeout(() => {
+        state.confirmAction = '';
+        state.confirmTimer = null;
+        updateCleanupButtons();
+      }, 3000);
+    }
+
+    elDeleteBatchBtn.addEventListener('click', async () => {
+      const g = getSelectedGroup();
+      if (!g || g.running_count > 0) return;
+      const key = `delete:${g.batch_id}`;
+      if (state.confirmAction !== key) {
+        armConfirm(key);
+        return;
+      }
+      clearPendingConfirm();
+      try {
+        const fetcher = window.sidecar?.fetch || fetch;
+        await fetcher('/api/delete-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ batchId: g.batch_id }),
+        });
+      } catch {
+        // Poll below will reflect latest state.
+      }
+      state.selectedBatchId = '';
+      state.selectedRunId = '';
+      state.pinnedOldBatch = false;
+      state.expandedThinks.clear();
+      state.etag = '';
+      poll(true);
+    });
+
+    elClearHistoryBtn.addEventListener('click', async () => {
+      const key = 'clear-all';
+      if (state.confirmAction !== key) {
+        armConfirm(key);
+        return;
+      }
+      clearPendingConfirm();
+      try {
+        const fetcher = window.sidecar?.fetch || fetch;
+        await fetcher('/api/clear-history', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+      } catch {
+        // Poll below will reflect latest state.
+      }
+      state.selectedBatchId = '';
+      state.selectedRunId = '';
+      state.pinnedOldBatch = false;
+      state.expandedThinks.clear();
+      state.etag = '';
+      poll(true);
+    });
+
+    document.getElementById('reloadBtn').addEventListener('click', () => {
+      if (typeof window.__saveMonitorTheme === 'function') {
+        window.__saveMonitorTheme();
+      }
+      window.location.reload();
+    });
+
+    elMeta.addEventListener('click', (e) => {
+      const pill = e.target.closest('[data-copy]');
+      if (!pill) return;
+      const val = pill.getAttribute('data-copy');
+      if (val && navigator.clipboard) {
+        navigator.clipboard.writeText(val);
+      }
+    });
+
+    poll(true);
+    setInterval(() => {
+      updateTimer();
+      poll(false);
+    }, 450);
+  </script>
+</body>
+</html>

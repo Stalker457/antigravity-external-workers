@@ -1,0 +1,36 @@
+# DSH Headless Profile 示例配置（请复制到 %USERPROFILE%\.dsh\profiles\headless\cordis.patch.yml）
+# 说明：
+# 1. 将下方 baseURL / model / apiKeyEnv 替换为你的实际服务商（官方 DeepSeek 或任意 OpenAI 兼容接口）。
+# 2. 请不要把真实 API Key 直接写进此文件，而是通过 Windows 用户环境变量设置，例如：
+#    setx DEEPSEEK_API_KEY "sk-你的真实密钥"
+#    （脚本会自动从 Windows 注册表读取 apiKeyEnv 指定的环境变量）
+
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: deepseek
+    model: deepseek-reasoner
+    reasoningEffort: high
+
+- id: llm-pi-ai
+  name: "@deepseek-ai/dsh-llm-pi-ai"
+  config:
+    providers:
+      deepseek:
+        displayName: DeepSeek
+        apiKeyEnv: DEEPSEEK_API_KEY
+        api: openai-completions
+        baseURL: https://api.deepseek.com/v1
+        models:
+          - id: deepseek-reasoner
+            name: DeepSeek Reasoner
+            reasoningEfforts:
+              low: low
+              medium: medium
+              high: high
+            input:
+              - text
+          - id: deepseek-chat
+            name: DeepSeek Chat
+            input:
+              - text

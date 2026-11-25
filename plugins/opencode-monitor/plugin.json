@@ -1,0 +1,6 @@
+{
+  "name": "opencode-monitor",
+  "displayName": "OpenCode Worker",
+  "description": "Self-contained OpenCode CLI external worker skill, collaboration rules, and live auxiliary side-pane monitor (OpenCode Monitor). Disable this plugin to turn off all OpenCode worker features.",
+  "logo": "logo.svg"
+}

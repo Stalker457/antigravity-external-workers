@@ -1,0 +1,11 @@
+{
+  "name": "dsh-worker",
+  "displayName": "DeepSeek Worker",
+  "description": "DeepSeek official CLI (dsh headless) external worker integration with 2–6 parallel dispatch and live DSH Monitor side-pane.",
+  "logo": "logo.svg",
+  "suggestedPrompts": [
+    "用 DSH 并行拆单实现这个功能并自动跑通测试",
+    "用 DeepSeek CLI 排查这个仓库里的报错并给出修复方案",
+    "列出当前 DSH headless 配置可用的模型列表"
+  ]
+}
